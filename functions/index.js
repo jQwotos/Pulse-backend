@@ -15,6 +15,9 @@
  */
 'use strict';
 
+const dev = false;
+
+const fs = require('fs'); // DEBUGGING
 const functions = require('firebase-functions');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
@@ -24,20 +27,42 @@ const admin = require('firebase-admin');
 const serviceAccount = require('./service-account.json');
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
-  databaseURL: `https://${process.env.GCLOUD_PROJECT}.firebaseio.com`,
+  databaseURL: dev
+    ? `http://localhost:9000`
+    : `https://${process.env.GCLOUD_PROJECT}.firebaseio.com`
 });
 
 // Spotify OAuth 2 setup
 // TODO: Configure the `spotify.client_id` and `spotify.client_secret` Google Cloud environment variables.
 const SpotifyWebApi = require('spotify-web-api-node');
 const Spotify = new SpotifyWebApi({
-  clientId: functions.config().spotify.client_id,
-  clientSecret: functions.config().spotify.client_secret,
-  redirectUri: `https://${process.env.GCLOUD_PROJECT}.firebaseapp.com/popup.html`,
+  clientId: 'c74433d6d8864f5b8d80f2fedbd46403',
+  clientSecret: '18f3206f6d584ad78d2778fe6e3cdc5e',
+  redirectUri: dev
+    ? 'http://localhost:5000'
+    : `https://${process.env.GCLOUD_PROJECT}.firebaseapp.com/popup.html`
 });
 
 // Scopes to request.
-const OAUTH_SCOPES = ['user-read-email'];
+const OAUTH_SCOPES = [
+  'user-read-email',
+  'user-modify-playback-state',
+  'user-read-playback-state',
+  'user-read-currently-playing',
+  'user-top-read',
+  'user-read-recently-played',
+  'user-library-modify',
+  'user-library-read',
+  'user-follow-modify',
+  'user-follow-read',
+  'playlist-read-private',
+  'playlist-modify-public',
+  'playlist-modify-private',
+  'playlist-read-collaborative',
+  'user-read-private',
+  'app-remote-control',
+  'streaming'
+];
 
 /**
  * Redirects the User to the Spotify authentication consent screen. Also the 'state' cookie is set for later state
@@ -47,8 +72,15 @@ exports.redirect = functions.https.onRequest((req, res) => {
   cookieParser()(req, res, () => {
     const state = req.cookies.state || crypto.randomBytes(20).toString('hex');
     console.log('Setting verification state:', state);
-    res.cookie('state', state.toString(), {maxAge: 3600000, secure: true, httpOnly: true});
-    const authorizeURL = Spotify.createAuthorizeURL(OAUTH_SCOPES, state.toString());
+    res.cookie('state', state.toString(), {
+      maxAge: 3600000,
+      secure: true,
+      httpOnly: true
+    });
+    const authorizeURL = Spotify.createAuthorizeURL(
+      OAUTH_SCOPES,
+      state.toString()
+    );
     res.redirect(authorizeURL);
   });
 });
@@ -65,7 +97,9 @@ exports.token = functions.https.onRequest((req, res) => {
       console.log('Received verification state:', req.cookies.state);
       console.log('Received state:', req.query.state);
       if (!req.cookies.state) {
-        throw new Error('State cookie not set or expired. Maybe you took too long to authorize. Please try again.');
+        throw new Error(
+          'State cookie not set or expired. Maybe you took too long to authorize. Please try again.'
+        );
       } else if (req.cookies.state !== req.query.state) {
         throw new Error('State validation failed');
       }
@@ -90,14 +124,20 @@ exports.token = functions.https.onRequest((req, res) => {
           const email = userResults.body['email'];
 
           // Create a Firebase account and get the Custom Auth Token.
-          const firebaseToken = await createFirebaseAccount(spotifyUserID, userName, profilePic, email, accessToken);
+          const firebaseToken = await createFirebaseAccount(
+            spotifyUserID,
+            userName,
+            profilePic,
+            email,
+            accessToken
+          );
           // Serve an HTML page that signs the user in and updates the user profile.
-          res.jsonp({token: firebaseToken});
+          res.jsonp({ token: firebaseToken });
         });
       });
     });
   } catch (error) {
-    return res.jsonp({error: error.toString});
+    return res.jsonp({ error: error.toString });
   }
   return null;
 });
@@ -109,32 +149,44 @@ exports.token = functions.https.onRequest((req, res) => {
  *
  * @returns {Promise<string>} The Firebase custom auth token in a promise.
  */
-async function createFirebaseAccount(spotifyID, displayName, photoURL, email, accessToken) {
+async function createFirebaseAccount(
+  spotifyID,
+  displayName,
+  photoURL,
+  email,
+  accessToken
+) {
   // The UID we'll assign to the user.
   const uid = `spotify:${spotifyID}`;
 
   // Save the access token to the Firebase Realtime Database.
-  const databaseTask = admin.database().ref(`/spotifyAccessToken/${uid}`).set(accessToken);
+  const databaseTask = admin
+    .database()
+    .ref(`/users/${uid}`)
+    .set({ accessToken });
 
   // Create or update the user account.
-  const userCreationTask = admin.auth().updateUser(uid, {
-    displayName: displayName,
-    photoURL: photoURL,
-    email: email,
-    emailVerified: true,
-  }).catch((error) => {
-    // If user does not exists we create it.
-    if (error.code === 'auth/user-not-found') {
-      return admin.auth().createUser({
-        uid: uid,
-        displayName: displayName,
-        photoURL: photoURL,
-        email: email,
-        emailVerified: true,
-      });
-    }
-    throw error;
-  });
+  const userCreationTask = admin
+    .auth()
+    .updateUser(uid, {
+      displayName: displayName,
+      photoURL: photoURL,
+      email: email,
+      emailVerified: true
+    })
+    .catch(error => {
+      // If user does not exists we create it.
+      if (error.code === 'auth/user-not-found') {
+        return admin.auth().createUser({
+          uid: uid,
+          displayName: displayName,
+          photoURL: photoURL,
+          email: email,
+          emailVerified: true
+        });
+      }
+      throw error;
+    });
 
   // Wait for all async tasks to complete, then generate and return a custom auth token.
   await Promise.all([userCreationTask, databaseTask]);
@@ -143,3 +195,55 @@ async function createFirebaseAccount(spotifyID, displayName, photoURL, email, ac
   console.log('Created Custom token for UID "', uid, '" Token:', token);
   return token;
 }
+
+const saveSong = async ({ songId }) => {
+  const spotifyToken = admin
+    .database()
+    .ref('/users/spotify:21x6nn6cz3sul4xpohjcyap7y')
+    .once('value')
+    .then(snapshot => {
+      const spotifyAccessToken = snapshot.val() && snapshot.val().accessToken;
+      Spotify.setAccessToken(spotifyAccessToken);
+      
+
+      Spotify.getAudioAnalysisForTrack(songId, (err, data) => {
+        if (err) {
+          console.error(
+            `An error ocurred when trying to fetch analysis for ${songId}\n${err}`
+          );
+        } else {
+          // delete data.body.meta.track.codestring;
+          fs.writeFile('data.json', JSON.stringify(data.body), () => {});
+          admin
+            .firestore()
+            .collection('songs')
+            .doc(songId)
+            .set({
+              analysis: data.body
+            });
+        }
+      });
+
+      Spotify.getAudioFeaturesForTrack(songId, (err, data) => {
+        if (err) {
+          console.error(
+            `An error ocurred when trying to fetch features for ${songId}\n${err}`
+          );
+        } else {
+          admin
+            .firestore()
+            .collection('songs')
+            .doc(songId)
+            .set({
+              features: JSON.parse(JSON.stringify(data.body))
+            });
+        }
+      });
+      return null;
+    });
+};
+
+exports.saveSong = functions.https.onRequest((req, res) => {
+  const { songId } = req.query;
+  saveSong({ songId });
+});
