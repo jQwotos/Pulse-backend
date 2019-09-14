@@ -204,7 +204,6 @@ const saveSong = async ({ songId }) => {
     .then(snapshot => {
       const spotifyAccessToken = snapshot.val() && snapshot.val().accessToken;
       Spotify.setAccessToken(spotifyAccessToken);
-      
 
       Spotify.getAudioAnalysisForTrack(songId, (err, data) => {
         if (err) {
@@ -213,13 +212,35 @@ const saveSong = async ({ songId }) => {
           );
         } else {
           // delete data.body.meta.track.codestring;
-          fs.writeFile('data.json', JSON.stringify(data.body), () => {});
+          let arr = [];
+          let SectArr = [];
+          let counter = 0;
+
+          data.body.sections.forEach((element, i) => {
+            SectArr.push({
+              elementStart: Math.round(element.start * 1000),
+              index: i
+            });
+          });
+
+          data.body.segments.forEach((element) => {
+            if (element.start > SectArr[counter].elementStart) {
+              counter += 1;
+            }
+
+            arr.push({
+              elementStart: Math.round(element.start * 1000),
+              elementLoudNess: element.loudness_start,
+              section: counter
+            });
+          });
+
           admin
             .firestore()
             .collection('songs')
             .doc(songId)
             .set({
-              analysis: data.body
+              analysis: arr
             });
         }
       });
@@ -247,3 +268,5 @@ exports.saveSong = functions.https.onRequest((req, res) => {
   const { songId } = req.query;
   saveSong({ songId });
 });
+
+exports.updateUsers = functions.https.onRequest(() => {});
