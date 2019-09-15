@@ -408,6 +408,20 @@ const validateUser = ({ user }) => {
   );
 };
 
+const injectUserInfo = ({ token }) => {
+  Spotify.setAccessToken(token);
+  Spotify.getMe().then((data) => {
+    admin
+      .database()
+      .ref(`/users/${token}`)
+      .update({
+        user_id: data.body.id
+      })
+  }, (err) => {
+    console.log('Error when getMe on ', token, err);
+  });
+};
+
 const updateUsers = async () => {
   admin
     .database()
@@ -418,6 +432,7 @@ const updateUsers = async () => {
         if (token && validateUser({ user: data.val() })) {
           console.log('=== Updating token ===', token);
           updateUsersState({ token });
+          injectUserInfo({ token });
         } else {
           console.log('Failed validation for', data.val());
         }
