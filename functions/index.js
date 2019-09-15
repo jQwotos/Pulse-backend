@@ -247,7 +247,8 @@ const saveSong = async ({ songId }) => {
           });
 
           data.body.segments.forEach(element => {
-            if (element.start > SectArr[counter].elementStart) {
+            if (counter < SectArr.length - 1 && element.start * 1000 > SectArr[counter].elementStart) {
+              console.log("Incrementing Counter");
               counter += 1;
             }
 
@@ -298,8 +299,6 @@ const updateUsersState = async ({ token }) => {
   Spotify.getMyCurrentPlaybackState({})
     .then(data => {
       if (data.statusCode != 204) {
-        console.log('=== DATA ===');
-        console.log(data);
         const artistsNames = data.body.item.artists
           .map(a => `${a.name},`)
           .join(' ');
@@ -341,7 +340,7 @@ const updateUsersState = async ({ token }) => {
                 let counter = 0;
 
                 const arr = data.body.segments.map(element => {
-                  if (element.start > SectArr[counter].elementStart) {
+                  if (counter < SectArr.length -1 && element.start * 1000 >  SectArr[counter].elementStart) {
                     counter++;
                   }
                   return {
