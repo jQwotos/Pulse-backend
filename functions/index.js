@@ -378,7 +378,7 @@ const updateUsersState = async ({ token }) => {
                   .database()
                   .ref(`/users/${token}`)
                   .once('value', (snapshot) => {
-                    const { latitude, longitude } = snapshot;
+                    const { latitude, longitude } = snapshot.val().location;
                     geoFire.set(songID, [latitude, longitude]).then(() => {
                       console.log('Saved ', songID, ' to geofire');
                     }, (err) => {
