@@ -2,6 +2,7 @@ import urllib.request
 import threading
 
 url = "http://localhost:5001/pulse-49ce6/us-central1/updateUsers"
+# url = "https://us-central1-pulse-49ce6.cloudfunctions.net/updateUsers"
 
 
 def run_check():

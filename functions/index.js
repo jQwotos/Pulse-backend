@@ -425,8 +425,23 @@ const updateUsers = async () => {
     });
 };
 
-
-
 exports.updateUsers = functions.https.onRequest((req, res) => {
   updateUsers();
 });
+
+exports.geoFire = functions.https.onRequest((req, res) => {
+  const geoQuery = geoFire.query({
+    center: [43.4725216, -80.5398393],
+    radius: 5,
+  });
+
+  const onKeyEnteredRegistration = geoQuery.on('key_entered', (key, location, distance) => {
+    console.log('=== KEY ENTERED', key);
+    admin
+      .database()
+      .ref(`/songs/${key}`)
+      .once("value", (snapshot) => {
+        console.log("value", snapshot.val());
+      })
+  });
+})
