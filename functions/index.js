@@ -25,7 +25,8 @@ const functions = require('firebase-functions');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
 const moment = require('moment');
-const geofire = require('geofire');
+const GeoFire = require('geofire').GeoFire;
+
 
 // Firebase Setup
 const admin = require('firebase-admin');
@@ -36,6 +37,10 @@ admin.initializeApp({
     ? `http://localhost:9000`
     : `https://${process.env.GCLOUD_PROJECT}.firebaseio.com`
 });
+
+// Geofire
+const geofireRef = admin.database().ref('/geofire');
+const geoFire = new GeoFire(geofireRef);
 
 // Spotify OAuth 2 setup
 // TODO: Configure the `spotify.client_id` and `spotify.client_secret` Google Cloud environment variables.
@@ -315,6 +320,7 @@ const updateUsersState = async ({ token }) => {
             .database()
             .ref(`/songs/${songID}`)
             .remove();
+          geoFire.remove(songID);
         } else {
           admin
           .database()
@@ -366,6 +372,19 @@ const updateUsersState = async ({ token }) => {
                   .update({
                     current: metadata
                   });
+
+                // Using geofire add the song to the geofire database
+                admin
+                  .database()
+                  .ref(`/users/${token}`)
+                  .once('value', (snapshot) => {
+                    const { latitude, longitude } = snapshot;
+                    geoFire.set(songID, [latitude, longitude]).then(() => {
+                      console.log('Saved ', songID, ' to geofire');
+                    }, (err) => {
+                      console.error("Error when trying to save ", songID, ' to geoFire', err);
+                    })
+                  })
               }
             });
           });
@@ -405,6 +424,8 @@ const updateUsers = async () => {
       });
     });
 };
+
+
 
 exports.updateUsers = functions.https.onRequest((req, res) => {
   updateUsers();
