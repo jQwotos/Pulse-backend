@@ -1,3 +1,6 @@
+/* eslint-disable promise/no-nesting */
+/* eslint-disable promise/always-return */
+/* eslint-disable promise/catch-or-return */
 /**
  * Copyright 2016 Google Inc. All Rights Reserved.
  *
@@ -21,6 +24,8 @@ const fs = require('fs'); // DEBUGGING
 const functions = require('firebase-functions');
 const cookieParser = require('cookie-parser');
 const crypto = require('crypto');
+const moment = require('moment');
+const geofire = require('geofire');
 
 // Firebase Setup
 const admin = require('firebase-admin');
@@ -196,6 +201,25 @@ async function createFirebaseAccount(
   return token;
 }
 
+const checkAndSaveSong = async ({ songId }) => {
+  admin
+    .firestore()
+    .collection('songs')
+    .doc(songId)
+    .get()
+    .then(snapshot => {
+      if (!snapshot.exists) {
+        saveSong({ songId });
+      } else {
+        console.log(`Song ${songId} already exists`);
+      }
+      return;
+    })
+    .catch(err => {
+      console.error('An error occured when trying to save song ', songId, err);
+    });
+};
+
 const saveSong = async ({ songId }) => {
   const spotifyToken = admin
     .database()
@@ -211,7 +235,6 @@ const saveSong = async ({ songId }) => {
             `An error ocurred when trying to fetch analysis for ${songId}\n${err}`
           );
         } else {
-          // delete data.body.meta.track.codestring;
           let arr = [];
           let SectArr = [];
           let counter = 0;
@@ -223,7 +246,7 @@ const saveSong = async ({ songId }) => {
             });
           });
 
-          data.body.segments.forEach((element) => {
+          data.body.segments.forEach(element => {
             if (element.start > SectArr[counter].elementStart) {
               counter += 1;
             }
@@ -266,7 +289,124 @@ const saveSong = async ({ songId }) => {
 
 exports.saveSong = functions.https.onRequest((req, res) => {
   const { songId } = req.query;
-  saveSong({ songId });
+  checkAndSaveSong({ songId, res });
 });
 
-exports.updateUsers = functions.https.onRequest(() => {});
+const updateUsersState = async ({ token }) => {
+  Spotify.setAccessToken(token);
+  console.log(`Requesting current playback state from spotify`);
+  Spotify.getMyCurrentPlaybackState({})
+    .then(data => {
+      if (data.statusCode != 204) {
+        console.log('=== DATA ===');
+        console.log(data);
+        const artistsNames = data.body.item.artists
+          .map(a => `${a.name},`)
+          .join(' ');
+        const songName = data.body.item.name;
+        const albumName = data.body.item.album.name;
+        const songID = data.body.item.id;
+        const progress = data.body.progress_ms;
+        const isPlaying = data.body.is_playing;
+        const timestamp = data.body.timestamp;
+        const startTime = timestamp - progress;
+
+        if (!isPlaying) {
+          admin
+            .database()
+            .ref(`/songs/${songID}`)
+            .remove();
+        } else {
+          admin
+          .database()
+          .ref('/token')
+          .once('value')
+          .then(snapshot => {
+            const spotifyAccessToken =
+              snapshot.val() && snapshot.val().accessToken;
+            Spotify.setAccessToken(spotifyAccessToken);
+
+            Spotify.getAudioAnalysisForTrack(songID, (err, data) => {
+              if (err) {
+                console.error(
+                  `An error ocurred when trying to fetch analysis for ${songID}\n${err}`
+                );
+              } else {
+                const SectArr = data.body.sections.map((element, i) => {
+                  return {
+                    elementStart: Math.round(element.start * 1000),
+                    index: i
+                  };
+                });
+                let counter = 0;
+
+                const arr = data.body.segments.map(element => {
+                  if (element.start > SectArr[counter].elementStart) {
+                    counter++;
+                  }
+                  return {
+                    elementStart: Math.round(element.start * 1000),
+                    elementLoudness: Math.abs(element.loudness_start),
+                    section: counter
+                  };
+                });
+
+                let metadata = {
+                  albumName,
+                  songName,
+                  progress,
+                  startTime,
+                  artists: artistsNames,
+                  apiID: songID,
+                  beats: arr
+                };
+
+                admin
+                  .database()
+                  .ref(`/songs/${songID}`)
+                  .update({
+                    current: metadata
+                  });
+              }
+            });
+          });
+        }
+        return;
+      }
+    })
+    .catch(err => {
+      console.log(
+        `An error occured when trying to update the users state for ${token}\n${err}`
+      );
+    });
+};
+
+const validateUser = ({ user }) => {
+  return (
+    moment.unix(user.expiresAt).isAfter(moment()) &&
+    user.location &&
+    user.location.latitude &&
+    user.location.longitude
+  );
+};
+
+const updateUsers = async () => {
+  admin
+    .database()
+    .ref('users')
+    .once('value', snapshot => {
+      snapshot.forEach(data => {
+        const { token = null } = data.val();
+        if (token && validateUser({ user: data.val() })) {
+          console.log('=== Updating token ===', token);
+          updateUsersState({ token });
+        } else {
+          console.log('Failed validation for', data.val());
+        }
+      });
+    });
+};
+
+exports.updateUsers = functions.https.onRequest((req, res) => {
+  updateUsers();
+});
